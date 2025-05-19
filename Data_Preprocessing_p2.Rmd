@@ -1,0 +1,218 @@
+# Data Preprocessing for Predictive Model Part 2: Grouping and New Attributes
+
+## Load libraries
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(httr)
+library(jsonlite)
+library(DBI)
+library(RSQLite)
+library(ggplot2)
+```
+
+#### Studios data processing
+
+The data analysis for studios is in data_analysis.Rmd. We want to include the studios column when training the predictive model. Since the column has too many unique values, doint the one-hot encoding will result in a very high dimension of our dataset. We have considered to choose the top10 studios with higest 10 average score, but the output result shows studios with only 1 to 3 anime counts, which does not represent the studios' performance enough.
+
+Based on the analysis, some of the well-known/popular studios usually have a high count of anime with along with a high score. Therefore, we decide to choose studios that have anime count \>= 30 with a score \>= 7.03 (the top 25% of the score).
+
+##### find anime count for each studios
+
+```{r}
+studios_stats <- anime_data5 |>
+  group_by(studios) |>
+  summarise(
+    count = n(),
+    avg_score = mean(score, na.rm = TRUE),
+    .groups = "drop"
+  )
+studios_stats
+```
+
+##### Filter studios with count \>= 30 and score \>= 7.03
+
+The output tibble show the studios that satisfy with our criteria. The output makes sense because these studios below are all well-know studios that produce popular anime each season.
+
+```{r}
+top_studios <- studios_stats |>
+  filter(count >= 30, avg_score >= 7.03)
+top_studios
+```
+
+##### Add, Delete column for studios
+
+22 studios were selected. However, 22 is still too much for one-hot encoding. As the result, we decide to further manipulate the column by adding a new column with the following description: For each row, if the studio belongs to 1 of the 22 top studios, we classify it as "top" Otherwise, it is "other".
+
+```{r}
+# list of top studios
+top22_studios <-  top_studios$studios
+# create a copy of anime data
+anime_data6 <-anime_data5
+anime_data6$studio_rank <- ifelse(
+  anime_data6$studios %in% top22_studios,
+  "Top",
+  "Other"
+)
+anime_data6$studio_rank <- factor(anime_data6$studio_rank, levels = c("Top", "Other"))
+
+# delete studios column
+anime_data6 <- anime_data6 |> select(-studios)
+anime_data6
+```
+
+Examine the dataset:
+
+```{r}
+boxplot(score ~ studio_rank,
+        data = anime_data6,
+        main = "Score Distribution: Top vs Other Studios",
+        xlab = "Studio Rank",
+        ylab = "Anime Score",
+        col = c("lightblue", "lightgreen"))
+```
+
+##### Producers
+
+###### Filter the top producers
+
+```{r}
+top_producers <- producer_stats |>
+  filter(count >= 30, avg_score >= 7.03) |>
+  arrange(desc(avg_score))
+
+top_producers
+```
+
+###### Add column to classify producer as "top" or "other"
+
+```{r}
+
+top_producer_list <- top_producers$producer
+
+tag_producer_rank <- function(producer_string) {
+  if (is.na(producer_string)) return("Other")
+  individual_producers <- str_split(producer_string, ",\\s*")[[1]]
+  if (any(individual_producers %in% top_producer_list)) {
+    return("Top")
+  }
+  return("Other")
+}
+
+anime_data6$producer_rank <- sapply(anime_data6$producers, tag_producer_rank)
+
+anime_data6$producer_rank <- factor(anime_data6$producer_rank, levels = c("Top", "Other"))
+# delete producers column
+anime_data6 <- anime_data6 |> select(-producers)
+anime_data6
+```
+
+###### Examin new dataset
+
+```{r}
+
+boxplot(score ~ studio_rank,
+        data = anime_data6,
+        main = "Score Distribution: Top vs Other Producers",
+        xlab = "Producer Rank",
+        ylab = "Anime Score",
+        col = c("lightblue", "lightgreen"))
+```
+
+#### Type Data Processing
+
+```{r}
+anime_data7 <- anime_data6
+anime_data7$type_rank <- case_when(
+  anime_data7$type %in% c("Movie", "TV") ~ "High",
+  anime_data7$type %in% c("TV Special", "Special", "ONA") ~ "Mid",
+  anime_data7$type %in% c("OVA", "Music", "CM", "PV") ~ "Low",
+  TRUE ~ "Other"
+)
+
+anime_data7$type_rank <- factor(anime_data7$type_rank, levels = c("Low", "Mid", "High"))
+anime_data7
+```
+
+##### Examing the new dataset
+
+```{r}
+
+boxplot(score ~ type_rank,
+        data = anime_data7,
+        main = "Score Distribution: Rank of Types",
+        xlab = "Type Rank",
+        ylab = "Anime Score",
+        col = c("lightblue", "lightgreen","orange"))
+anime_data7 <- anime_data7 |> select(-type)
+
+```
+
+#### Rating Processing
+
+```{r}
+anime_data8 <- anime_data7
+anime_data8$rating_rank <- case_when(
+  anime_data8$rating %in% c("R - 17+ (violence & profanity)", "PG-13 - Teens 13 or older") ~ "High",
+  anime_data8$rating %in% c("PG - Children", "G - All Ages", "R+ - Mild Nudity") ~ "Mid",
+  anime_data8$rating == "Rx - Hentai" ~ "Low",
+  TRUE ~ NA_character_
+)
+
+anime_data8$rating_rank <- factor(anime_data8$rating_rank, levels = c("Low", "Mid", "High"))
+
+anime_data8 <- anime_data8 |> select(-rating)
+anime_data8
+```
+
+##### Examing the new dataset
+
+```{r}
+boxplot(score ~ rating_rank,
+        data = anime_data8,
+        main = "Score Distribution: Rank of Ratings",
+        xlab = "Rating Rank",
+        ylab = "Anime Score",
+        col = c("lightblue", "lightgreen","orange"))
+```
+
+#### One-hot Encoding for Genres
+
+```{r}
+# One-hot encode only for the top genres
+onehot_top10 <- anime_data8 |>
+  mutate(row_id = row_number(),
+         genres = str_split(genres, ",\\s*")) |>
+  unnest(genres) |>
+  filter(genres %in% top10_genre) |>
+  mutate(dummy = 1) |>
+  pivot_wider(
+    id_cols = row_id,
+    names_from = genres,
+    values_from = dummy,
+    values_fill = list(dummy = 0)
+  )
+
+# Join back to original data
+data_1hot <- anime_data8 |>
+  mutate(row_id = row_number()) |>
+  left_join(onehot_top10, by = "row_id") |>
+  select(-row_id)
+# we delete the original genres column
+data_1hot <- data_1hot |> select(-genres)
+summary(data_1hot)
+```
+
+#### Last data processing for predictive analysis
+
+Remove mal_id and title. Then, change status to factor modified_data will be the data we use for predictive analysis
+
+```{r}
+modified_data <- data_1hot
+modified_data <- modified_data |> select(-mal_id)
+modified_data <- modified_data |> select(-title)
+modified_data$status <- as.factor(modified_data$status)
+modified_data
+```

@@ -1,0 +1,289 @@
+# Data Analysis of Anime Data
+
+### Load libraries
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(stringr)
+```
+
+### Pattern Discovering
+
+Try some basic function to see if any pattern exists
+
+```{r}
+da_set <- anime_data2
+summary(da_set)
+cor(da_set[sapply(da_set, is.numeric)])
+```
+
+#### Overall score and Outlier
+
+From the block below, we see that top 25% of the score are above 7.03 in raw data
+
+```{r}
+anime_score <- anime_data0[!is.na(anime_data0$score),]$score
+boxplot(anime_score,
+        horizontal = TRUE,
+        main = "Anime Scores",
+        ylab = "Score",
+        col = "lightblue",
+        border = "darkblue")
+boxplot(anime_score,
+        horizontal = TRUE,
+        outline = FALSE,
+        main = "Anime Scores without Outliers",
+        ylab = "Score",
+        col = "lightblue",
+        border = "darkblue")
+summary(anime_score)
+
+```
+
+##### Count outliers
+
+102 outliers are in the raw data.
+
+```{r}
+Q1 <- quantile(anime_score, 0.25, na.rm = TRUE)
+Q3 <- quantile(anime_score, 0.75, na.rm = TRUE)
+IQR_val <- Q3 - Q1
+
+# Define lower and upper bounds
+lower_bound <- Q1 - 1.5 * IQR_val
+upper_bound <- Q3 + 1.5 * IQR_val
+
+# Count outliers
+num_outliers <- sum(anime_score < lower_bound | anime_score > upper_bound, na.rm = TRUE)
+
+num_outliers
+
+```
+
+#### Top 10 genres
+
+Use the dataset "anime_data2" to find top 10 genre criteria of top 10 genre: average score
+
+```{r}
+genre_counts <- anime_data2 |>
+  select(genres) |>
+  mutate(genres = str_split(genres, ",\\s*")) |>  # split genres on comma
+  unnest(genres) |>
+  group_by(genres) |>
+  summarise(count = n()) |>
+  arrange(desc(count))
+genre_counts
+```
+
+find top genre using avg score Based on the result, anime who has win the award has the higest avg score
+
+```{r}
+top_genres <- anime_data5 |>
+  select(score, genres) |>
+  filter(!is.na(score), !is.na(genres)) |>
+  mutate(genres = str_split(genres, ",\\s*")) |>
+  unnest(genres) |>
+  group_by(genres) |>
+  summarise(
+    avg_score = mean(score, na.rm = TRUE),
+    sd_score = sd(score, na.rm = TRUE),
+    count = n()
+  ) |>
+  arrange(desc(avg_score)) |>
+  slice_head(n = 10)
+top_genres
+```
+
+##### Result: top 10 genres are "Award, Winning", "Suspense", "Mystery", "Drama", "Romance", "Supernatural", "Action", "Adventure", "Sports", "Girls Love"
+
+```{r}
+top10_genre <- c("Award, Winning", "Suspense", "Mystery", "Drama", "Romance", 
+                 "Supernatural", "Action", "Adventure", "Sports", "Girls Love")
+```
+
+#### Top studio and producers
+
+##### Studios
+
+count the studios
+
+```{r}
+studio_counts <- anime_data5 |>
+  select(studios, score) |>
+  unnest(studios) |>
+  filter(!is.na(score)) |>
+  group_by(studios) |>
+  summarise(
+    count = n(),
+    avg_score = mean(score, na.rm = TRUE),
+    sd_score = sd(score, na.rm = TRUE)
+  ) |>
+  arrange(desc(count))
+studio_counts
+```
+
+Find the studios from highest average score
+
+```{r}
+top_studio <- anime_data5 |>
+  select(score, studios) |>
+  filter(!is.na(score), !is.na(studios)) |>
+  unnest(studios) |>
+  group_by(studios) |>
+  summarise(
+    avg_score = mean(score, na.rm = TRUE),
+    sd_score = sd(score, na.rm = TRUE),
+    count = n()
+  ) |>
+  arrange(desc(avg_score))
+top_studio
+```
+
+For each count, analysis using boxplot on the distribution of anime produced in studios. Log function was used to better visualize the distribution
+
+```{r}
+studios_counts <- as.numeric(table(unlist(anime_data5$studios)))
+
+log_counts <- log1p(studios_counts)  # log(1 + x) to handle zeros
+hist(log_counts,
+     breaks = 20,
+     main = "Log-Transformed Distribution of Anime Counts per Studio",
+     xlab = "log(1 + Anime Count)",
+     col = "skyblue")
+```
+
+It is hard to see which studio are really popular because give the count of of 1,2, or 3 doesn't give us too much information on their performance in a long run - data is insufficient. Based on domain knowledge, it seems a larger anime count for the studio corresponds to a higher score and are more well-known.
+
+After analysis, it seems that the column "studios" should be re processed for a better and easier training process in prediction part.
+
+Please see data preprocessing.Rmd "Studios Data Processing" for detail.
+
+##### Producers
+
+Split to individuals
+
+```{r}
+producer_long <- anime_data5 |>
+  mutate(producer = str_split(producers, ",\\s*")) |>
+  unnest(producer)
+producer_long
+```
+
+We implement the same thing for producer.
+
+##### Count the average score for each producer
+
+```{r}
+producer_stats <- producer_long |>
+  group_by(producer) |>
+  summarise(
+    count = n(),
+    avg_score = mean(score, na.rm = TRUE),
+    .groups = "drop"
+  )
+producer_stats
+```
+
+It seems that many producers only produce couple anime while a small number of them produced more than usual large amount of anime
+
+```{r}
+producers_counts <- as.numeric(table(unlist(producer_long$producer)))
+
+log_counts_producers <- log1p(producers_counts)  # log(1 + x) to handle zeros
+hist(log_counts_producers,
+     breaks = 20,
+     main = "Log-Transformed Distribution of Anime Counts per Producers",
+     xlab = "log(1 + Anime Count)",
+     col = "skyblue")
+```
+
+The producers were regrouped for predictive model. Please see data preprocessing part 2.Rmd for detail
+
+
+### Type and Rating Analysis
+Unique values in "type"
+```{r}
+table(anime_data5$type)
+```
+distribution of each type values
+```{r}
+boxplot(score ~ type,
+        data = anime_data5,
+        main = "Distribution of Anime Scores by Type",
+        xlab = "Anime Type",
+        ylab = "Score",
+        col = "lightblue",
+        las = 2)  # rotate x-axis labels for readability
+```
+Average score of each type value from the highest
+```{r}
+anime_data5 |>
+  group_by(type) |>
+  summarise(avg_score = mean(score, na.rm = TRUE), .groups = "drop") |>
+  arrange(desc(avg_score))
+```
+
+#### Check difference between the types
+
+Because p value \< 0.05, there is significant difference in average score between some types
+
+```{r}
+anova_result <- aov(score ~ type, data = anime_data5)
+summary(anova_result)
+
+```
+
+By implementing Tukey test, it shows which two types have average score that are significantly different.
+
+```{r}
+TukeyHSD(anova_result)
+
+```
+
+From the result, we see that Movie and TV had a significantly higher average score than others. TV Special, Special, and ONA had lower average scores but also significantly different from other types. PV is not significantly different from CM, OVA, or Music in many comparisons. And TV Special overlaps with several types.
+
+*Based on the result, we add a new categorical column for predictive analysis. Detail is in Data preprocessing part2 Rmd*
+
+#### Rating Analysis
+Unique values in "rating"
+```{r}
+table(anime_data5$rating)
+```
+Distribution of rating values
+```{r}
+boxplot(score ~ rating,
+        data = anime_data5,
+        main = "Distribution of Anime Scores by Rating",
+        xlab = "Anime Rating",
+        ylab = "Score",
+        col = "lightblue",
+        las = 1,
+        cex.axis = 0.6)  # rotate x-axis labels for readability
+```
+Average score of rating values from the highest
+```{r}
+anime_data5 |>
+  group_by(rating) |>
+  summarise(avg_score = mean(score, na.rm = TRUE), .groups = "drop") |>
+  arrange(desc(avg_score))
+```
+
+#### Check difference between the ratings
+
+Because p value \< 0.05, there is significant difference in average score between some ratings
+
+```{r}
+anova_result_rating <- aov(score ~ rating, data = anime_data5)
+summary(anova_result_rating)
+
+```
+
+By implementing Tukey test, it shows which two ratings have average score that are significantly different.
+
+```{r}
+TukeyHSD(anova_result_rating)
+
+```
+
+From the report, all other pairs have significantly differenct average score from each other except for PG - Children-G - All Ages and R+ - Mild Nudity-G - All Ages pairs. Based on the result and the boxplot above, the new column for rating was created in Data preprocessing part2 Rmd.

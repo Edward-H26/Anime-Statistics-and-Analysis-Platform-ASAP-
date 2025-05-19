@@ -1,0 +1,13 @@
+name: AnimeStatisticsandAnalysisPlatform
+title: AnimeStatisticsandAnalysisPlatform
+username: qiranhu
+account: qiranhu
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 14674054
+bundleId: 10221730
+url: https://qiranhu.shinyapps.io/AnimeStatisticsandAnalysisPlatform/
+version: 1
+asMultiple: FALSE
+asStatic: FALSE
+ignoredFiles: anime_full_database.sqlite|NA_processing_for_report.Rmd|predictive_model.Rmd|README.md

@@ -1,0 +1,142 @@
+# Data Preprocessing
+This file is used to clean the dataset for later data analysis and predictive model
+
+## Load Libraries
+```{r}
+library(httr)
+library(jsonlite)
+library(DBI)
+library(RSQLite)
+library(ggplot2)
+```
+
+
+## Check NAs
+### Create "check missing" function
+
+```{r}
+
+check_missing <- function(thedata) {
+  # Total number of rows
+  n_rows <- nrow(thedata)
+  
+  # Find missing percentage for each column
+  missing_summary <- sapply(thedata, function(x) sum(is.na(x)) / n_rows * 100)
+  
+  # Turn into a nice data frame
+  missing_df <- data.frame(
+    column = names(missing_summary),
+    missing_percent = round(missing_summary, 2)  # Round to 2 decimal places
+  )
+  
+  # Sort by missing_percent descending
+  missing_df <- missing_df[order(-missing_df$missing_percent), ]
+  
+  print(missing_df)
+  
+  # Missing value graph for the report
+  ggplot(missing_df, aes(x = reorder(column, missing_percent), y = missing_percent, fill = -missing_percent)) +
+      geom_bar(stat = "identity") +
+      geom_text(aes(label = paste0(round(missing_percent, 1), "%")), 
+                hjust = -0.1,  # Move the label a little to the right of bar
+                size = 4) +    # Text size
+      coord_flip() +
+      labs(x = "Attribute", y = "Missing Data (%)", title = "Percent Missing of each Attribute in Jikan Anime Data", fill = "Missing Percent" ) +
+      theme_minimal() +
+      theme(plot.title = element_text(hjust = 0.5, size = 28, face = "bold"),
+            axis.title.x = element_text(size = 19),
+            axis.title.y = element_text(size = 19),
+            axis.text.y = element_text(size = 14),)
+  
+}
+
+
+```
+
+### check current raw dataset
+
+```{r}
+# Connect if not already
+conn <- dbConnect(SQLite(), "anime_full_database.sqlite")
+
+# Read the table
+anime_data0 <- dbReadTable(conn, "anime_full")
+
+check_missing(anime_data0)
+
+
+```
+
+When title is missing, the entire row is invalid, we remove rows with title missing
+
+```{r}
+
+# Keep only rows where title is NOT missing
+anime_data1 <- anime_data0[!is.na(anime_data0$title), ]
+sum(is.na(anime_data1$title))
+nrow(anime_data1)
+
+```
+
+The valid anime rows is now 28318 instead of 28477. Inspect missing values again:
+
+```{r}
+check_missing(anime_data1)
+```
+
+# Clean Data for Predictive Analysis
+
+#### we remove rows that don't have genre appear
+
+#### we remove rows that don't have producers
+
+#### we remove rows that don't have studios
+
+and check missing data again
+
+```{r}
+anime_data2 <- anime_data1[!is.na(anime_data1$genres),]
+nrow(anime_data2)
+check_missing(anime_data2)
+anime_data3 <- anime_data2[!is.na(anime_data2$producers),]
+anime_data4 <- anime_data3[!is.na(anime_data3$studios),]
+check_missing(anime_data4)
+
+```
+
+#### Then, we select only the attributes we want
+
+```{r}
+selected_attributes <- c("mal_id", "title", "type", "episodes", "status", 
+                          "rating", "score", "scored_by", "rank", "popularity", 
+                          "members", "favorites", "genres", "studios", "producers")
+anime_data5 <- anime_data4[, selected_attributes]
+
+```
+
+### Last
+
+Use the dataset you want for each analysis section:\\
+
+-   anime_data0 = raw data from Jikan API
+
+-   anime_data1 = anime data with no empty title
+
+-   anime_data2 = anime data with no empty title and no empty genres
+
+-   anime_data5 = anime data with no empty title, no empty genres, no empty producers, no empty studios, and reduced columns.
+
+### Improvement if have time
+
+instead of make a copy of each cleaned dataset, an efficient way can be implemented to make it save more storage space
+
+For studios, a manual clean can be implemented since some of the studios with 1-3 anime counts are basically a sub-department from a large studio. We would need to change their categorical value into the name of their large studio. Some other studios with 1-3 anime counts are because the collboration of couple studios together.
+
+### Free block: test/see the data frame here
+
+Type the name of data frame to see the who dataset Type the str(name of dataframe to see the structure of it)
+
+```{r}
+anime_data5
+str(anime_data5)
+```

@@ -1,0 +1,246 @@
+# Data Fetching
+
+This file walk through how our data is fetched from Jikan API
+
+Please do not run this file unless you don't see a "anime_full_database.sqlite" in the project folder.
+
+## Load libraries
+
+```{r}
+library(httr)
+library(jsonlite)
+library(DBI)
+library(RSQLite)
+library(ggplot2)
+```
+
+## Fetch Data
+
+#### note: run data fetching part only once to make sure. To fetch all the data into database take couple hours
+
+```{r}
+
+
+# Connect to database
+conn <- dbConnect(SQLite(), "anime_full_database.sqlite")
+
+safe_extract <- function(x) {
+  if (is.null(x) || length(x) == 0) {
+    return(NA)
+  } else {
+    return(x)
+  }
+}
+
+insert_anime <- function(data) {
+  dbExecute(conn, "
+    INSERT OR REPLACE INTO anime_full 
+    (mal_id, title, title_english, title_japanese, type, source, episodes, status, airing, aired_from, aired_to, duration, rating, score, scored_by, rank, popularity, members, favorites, synopsis, background, season, year, broadcast_day, broadcast_time, broadcast_timezone, url)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  ", params = list(
+    safe_extract(data[["mal_id"]]),
+    safe_extract(data[["title"]]),
+    safe_extract(data[["title_english"]]),
+    safe_extract(data[["title_japanese"]]),
+    safe_extract(data[["type"]]),
+    safe_extract(data[["source"]]),
+    safe_extract(data[["episodes"]]),
+    safe_extract(data[["status"]]),
+    safe_extract(data[["airing"]]),
+    safe_extract(data[["aired"]][["from"]]),
+    safe_extract(data[["aired"]][["to"]]),
+    safe_extract(data[["duration"]]),
+    safe_extract(data[["rating"]]),
+    safe_extract(data[["score"]]),
+    safe_extract(data[["scored_by"]]),
+    safe_extract(data[["rank"]]),
+    safe_extract(data[["popularity"]]),
+    safe_extract(data[["members"]]),
+    safe_extract(data[["favorites"]]),
+    safe_extract(data[["synopsis"]]),
+    safe_extract(data[["background"]]),
+    safe_extract(data[["season"]]),
+    safe_extract(data[["year"]]),
+    safe_extract(data[["broadcast"]][["day"]]),
+    safe_extract(data[["broadcast"]][["time"]]),
+    safe_extract(data[["broadcast"]][["timezone"]]),
+    safe_extract(data[["url"]])
+  ))
+}
+
+
+fetch_page_anime <- function(page_num) {
+  url <- paste0("https://api.jikan.moe/v4/anime?page=", page_num)
+  resp <- GET(url)
+  
+  if (status_code(resp) == 200) {
+    result <- fromJSON(content(resp, "text", encoding = "UTF-8"), simplifyVector = FALSE)
+    anime_list <- result$data
+    
+    for (i in seq_along(anime_list)) {
+      insert_anime(anime_list[[i]])
+    }
+    
+    cat("Page", page_num, "done! Inserted", length(anime_list), "animes.\n")
+  } else {
+    cat("Failed to fetch page", page_num, "Status:", status_code(resp), "\n")
+  }
+}
+
+
+# Fetch pages 1 to n
+for (page in 1:1000) {
+  fetch_page_anime(page)
+  Sys.sleep(1) # avoid being rate-limited
+}
+
+for (page in 1000:1100) {
+  fetch_page_anime(page)
+  Sys.sleep(1) 
+}
+
+for (page in 1100:1150) {
+  fetch_page_anime(page)
+  Sys.sleep(1)
+}
+
+
+
+```
+
+## Attach genre to the database if needed
+
+```{r}
+dbExecute(conn, "ALTER TABLE anime_full ADD COLUMN genres TEXT;")
+
+```
+
+### create function for fetch anime genres
+
+```{r}
+library(httr)
+library(jsonlite)
+
+fetch_anime_genres <- function(mal_id) {
+  url <- paste0("https://api.jikan.moe/v4/anime/", mal_id)
+  resp <- GET(url)
+  
+  if (status_code(resp) == 200) {
+    data <- fromJSON(content(resp, "text", encoding = "UTF-8"))$data
+    genres_list <- data$genres
+    if (length(genres_list) == 0) {
+      return(NA)
+    } else {
+      return(paste(genres_list$name, collapse = ", "))
+    }
+  } else {
+    return(NA)
+  }
+}
+
+```
+
+### fetch genres
+
+```{r}
+# instead of get all mal_id, getting mal_id with whose genre is null is more efficient, and can also query multiple time if a computer is not avaliable right now.
+mal_ids <- dbGetQuery(conn, "SELECT mal_id FROM anime_full WHERE genres IS NULL ")$mal_id
+
+for (i in seq_along(mal_ids)) {
+  id <- mal_ids[i]
+  genres <- fetch_anime_genres(id)
+  
+  # Update the database
+  dbExecute(conn, "UPDATE anime_full SET genres = ? WHERE mal_id = ?", params = list(genres, id))
+  
+  cat("Updated mal_id:", id, "Genres:", genres, "\n")
+  
+  Sys.sleep(0.7)
+
+}
+
+
+# for test
+dbGetQuery(conn, "SELECT mal_id, genres, producers, studios FROM anime_full")
+```
+
+### Add studios and producers into database
+
+```{r}
+dbExecute(conn, "ALTER TABLE anime_full ADD COLUMN producers TEXT;")
+dbExecute(conn, "ALTER TABLE anime_full ADD COLUMN studios TEXT;")
+
+```
+
+### Create a callable function for fetching producers and studios
+
+```{r}
+library(httr)
+library(jsonlite)
+
+fetch_producers_studios <- function(mal_id) {
+  url <- paste0("https://api.jikan.moe/v4/anime/", mal_id, "/full")
+  resp <- GET(url)
+  
+  if (status_code(resp) == 200) {
+    data <- fromJSON(content(resp, "text", encoding = "UTF-8"), simplifyDataFrame = FALSE)$data
+    
+    producers <- if (length(data$producers) > 0) {
+      paste(sapply(data$producers, function(x) x$name), collapse = ", ")
+    } else {
+      NA
+    }
+    
+    studios <- if (length(data$studios) > 0) {
+      paste(sapply(data$studios, function(x) x$name), collapse = ", ")
+    } else {
+      NA
+    }
+    
+    return(list(producers = producers, studios = studios))
+  } else {
+    cat("Failed to fetch", mal_id, "Status:", status_code(resp), "\n")
+    return(list(producers = NA, studios = NA))
+  }
+}
+# create the list of mal_id we want to fetch
+mal_ids <- dbGetQuery(conn, "SELECT mal_id FROM anime_full WHERE producers IS NULL OR studios IS NULL")$mal_id
+```
+
+### Fetch producers and studios
+
+```{r}
+
+
+conn <- dbConnect(SQLite(), "anime_full_database.sqlite")
+
+
+# Loop from start_index to the end
+for (i in seq_along(mal_ids)) {
+  id <- mal_ids[i]
+  info <- fetch_producers_studios(id)
+  
+  dbExecute(conn,
+    "UPDATE anime_full SET producers = ?, studios = ? WHERE mal_id = ?",
+    params = list(info$producers, info$studios, id)
+  )
+  
+  cat("Updated mal_id:", id, "\n")
+  Sys.sleep(0.9)
+}
+
+```
+
+## Test if data are avaliable
+
+```{r}
+
+dbGetQuery(conn, "SELECT * FROM anime_full")
+dbGetQuery(conn, "SELECT COUNT(*) FROM anime_full")
+dbGetQuery(conn, "SELECT * FROM anime_full ORDER BY mal_id DESC LIMIT 25")
+```
+
+```{r}
+# Disconnect after everything done
+dbDisconnect(conn)
+```
